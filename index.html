@@ -276,7 +276,7 @@ async function loadFromAPI() {
     tg.expand();
   }
 
-  // Try API with Telegram auth first
+  // Strategy 1: API with Telegram initData auth
   if (tg && tg.initData) {
     try {
       const resp = await fetch(`${API_BASE}/api/portfolio`, {
@@ -288,22 +288,61 @@ async function loadFromAPI() {
         return;
       }
     } catch (e) {
-      console.warn('API fetch failed, trying URL data fallback:', e);
+      console.warn('API auth fetch failed:', e);
     }
   }
 
-  // Fallback: URL-encoded data (for dev/testing)
+  // Strategy 2: API with TG user ID (dev/desktop fallback)
+  const tgUser = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
+  if (tgUser && tgUser.id) {
+    try {
+      const resp = await fetch(`${API_BASE}/api/portfolio?tgId=${tgUser.id}`);
+      if (resp.ok) {
+        const apiData = await resp.json();
+        render({
+          user: tgUser.first_name || apiData.user,
+          date: apiData.generatedAt?.split('T')[0] || new Date().toISOString().split('T')[0],
+          positions: apiData.positions,
+        });
+        return;
+      }
+    } catch (e) {
+      console.warn('API tgId fetch failed:', e);
+    }
+  }
+
+  // Strategy 3: URL-encoded data (direct link from bot)
   const urlData = getPortfolioData();
   if (urlData) {
     render(urlData);
     return;
   }
 
-  // Nothing available
+  // Strategy 4: URL userId param (dev testing)
+  const params = new URLSearchParams(window.location.search);
+  const devUser = params.get('userId');
+  if (devUser) {
+    try {
+      const resp = await fetch(`${API_BASE}/api/portfolio?userId=${devUser}`);
+      if (resp.ok) {
+        const apiData = await resp.json();
+        render({ user: devUser, date: new Date().toISOString().split('T')[0], positions: apiData.positions });
+        return;
+      }
+    } catch (e) {
+      console.warn('Dev mode fetch failed:', e);
+    }
+  }
+
   document.getElementById('app').innerHTML = `
     <div class="error">
       <h2>Loading Failed</h2>
-      <p>Please open this page from Telegram.</p>
+      <p>Please open this page from the Telegram bot (@SSXargusbot).</p>
+      <p style="font-size:11px;color:#555;margin-top:12px">
+        TG WebApp: ${tg ? 'yes' : 'no'}<br>
+        initData: ${tg?.initData ? tg.initData.substring(0,30) + '...' : 'empty'}<br>
+        user: ${tgUser ? JSON.stringify(tgUser) : 'none'}
+      </p>
     </div>`;
 }
 
