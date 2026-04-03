@@ -957,11 +957,13 @@ function renderPortfolio(data) {
       resultEl.innerHTML = '<div class="qa-loading"><div class="spinner"></div><div>Analyzing...</div></div>';
 
       try {
-        const data = await apiFetch(`/api/analyze?ticker=${encodeURIComponent(ticker)}&persona=${persona}`);
-        const actionClass = (data.action || '').toLowerCase().includes('buy') ? 'buy'
-          : (data.action || '').toLowerCase().includes('avoid') ? 'avoid' : 'hold';
+        const raw = await apiFetch(`/api/analyze?ticker=${encodeURIComponent(ticker)}&persona=${persona}`);
+        const data = raw.analysis || raw;
+        const action = (data.action || 'HOLD').toUpperCase();
+        const actionClass = action.includes('BUY') || action.includes('SCALE') ? 'buy'
+          : action.includes('AVOID') || action.includes('SELL') ? 'avoid' : 'hold';
         resultEl.innerHTML = `
-          <div style="margin-bottom:8px"><span class="action-badge ${actionClass}">${data.action || 'N/A'}</span></div>
+          <div style="margin-bottom:8px"><span class="action-badge ${actionClass}">${action}</span></div>
           <div style="font-size:13px;line-height:1.5">${data.summary || 'No analysis available.'}</div>
         `;
       } catch (err) {
@@ -1026,18 +1028,23 @@ async function runAnalysis() {
   analysisResults.innerHTML = renderLoading(`Analyzing ${ticker} as ${PERSONA_LABELS[persona]}...`);
 
   try {
-    const data = await apiFetch(`/api/analyze?ticker=${encodeURIComponent(ticker)}&persona=${persona}`);
+    const raw = await apiFetch(`/api/analyze?ticker=${encodeURIComponent(ticker)}&persona=${persona}`);
+    const data = raw.analysis || raw; // unwrap {analysis: {...}} envelope
 
     const actionRaw = (data.action || 'HOLD').toUpperCase();
-    const actionClass = actionRaw.includes('BUY') ? 'buy' : actionRaw.includes('AVOID') ? 'avoid' : 'hold';
-    const confidence = data.confidence ?? 0;
+    const actionClass = actionRaw.includes('BUY') || actionRaw.includes('SCALE') ? 'buy'
+      : actionRaw.includes('AVOID') || actionRaw.includes('SELL') ? 'avoid' : 'hold';
+    const confidence = typeof data.confidence === 'number'
+      ? (data.confidence <= 1 ? Math.round(data.confidence * 100) : data.confidence)
+      : 0;
 
-    // Radar dimensions
+    // Radar dimensions — normalize to 0-100 scale
     const dims = data.dimensions || {};
     const radarLabels = ['Value', 'Growth', 'Momentum', 'Risk', 'Quality'];
+    const norm = v => typeof v === 'number' ? (v <= 10 ? v * 10 : v) : 50;
     const radarData = [
-      dims.value ?? 50, dims.growth ?? 50, dims.momentum ?? 50,
-      dims.risk ?? 50, dims.quality ?? 50
+      norm(dims.value), norm(dims.growth), norm(dims.momentum),
+      norm(dims.risk), norm(dims.quality)
     ];
 
     analysisResults.innerHTML = `
