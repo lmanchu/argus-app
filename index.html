@@ -267,15 +267,47 @@ function render(data) {
   });
 }
 
-// Init
-const data = getPortfolioData();
-render(data);
+const API_BASE = 'https://argus-api.irisgo.xyz';
 
-// Telegram WebApp integration
-if (window.Telegram && window.Telegram.WebApp) {
-  window.Telegram.WebApp.ready();
-  window.Telegram.WebApp.expand();
+async function loadFromAPI() {
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+  }
+
+  // Try API with Telegram auth first
+  if (tg && tg.initData) {
+    try {
+      const resp = await fetch(`${API_BASE}/api/portfolio`, {
+        headers: { 'X-Telegram-Init-Data': tg.initData },
+      });
+      if (resp.ok) {
+        const apiData = await resp.json();
+        render({ user: apiData.user, date: apiData.generatedAt?.split('T')[0], positions: apiData.positions });
+        return;
+      }
+    } catch (e) {
+      console.warn('API fetch failed, trying URL data fallback:', e);
+    }
+  }
+
+  // Fallback: URL-encoded data (for dev/testing)
+  const urlData = getPortfolioData();
+  if (urlData) {
+    render(urlData);
+    return;
+  }
+
+  // Nothing available
+  document.getElementById('app').innerHTML = `
+    <div class="error">
+      <h2>Loading Failed</h2>
+      <p>Please open this page from Telegram.</p>
+    </div>`;
 }
+
+loadFromAPI();
 </script>
 </body>
 </html>
