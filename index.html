@@ -547,8 +547,8 @@ body {
   <div class="persona-selector" id="persona-selector">
     <button class="persona-pill selected" data-persona="buffett">Buffett</button>
     <button class="persona-pill" data-persona="marks">Marks</button>
-    <button class="persona-pill" data-persona="dalio">Dalio</button>
-    <button class="persona-pill" data-persona="wood">Wood</button>
+    <button class="persona-pill selected" data-persona="dalio">Dalio</button>
+    <button class="persona-pill selected" data-persona="wood">Wood</button>
     <button class="persona-pill" data-persona="lynch">Lynch</button>
     <button class="persona-pill" data-persona="gmo">GMO</button>
     <button class="persona-pill" data-persona="greenblatt">Greenblatt</button>
@@ -1009,11 +1009,37 @@ const analysisInput = document.getElementById('analysis-ticker');
 const analysisGoBtn = document.getElementById('analysis-go');
 const analysisResults = document.getElementById('analysis-results');
 
+// Multi-select persona pills (toggle, max 4)
+const PERSONA_COLORS = {
+  buffett: { bg: 'rgba(233,69,96,0.15)', border: '#e94560', point: '#e94560' },
+  marks:   { bg: 'rgba(243,156,18,0.15)', border: '#f39c12', point: '#f39c12' },
+  dalio:   { bg: 'rgba(52,152,219,0.15)', border: '#3498db', point: '#3498db' },
+  wood:    { bg: 'rgba(155,89,182,0.15)', border: '#9b59b6', point: '#9b59b6' },
+  lynch:   { bg: 'rgba(0,214,143,0.15)',  border: '#00d68f', point: '#00d68f' },
+  gmo:     { bg: 'rgba(241,196,15,0.15)', border: '#f1c40f', point: '#f1c40f' },
+  greenblatt:{ bg:'rgba(230,126,34,0.15)',border: '#e67e22', point: '#e67e22' },
+  growth:  { bg: 'rgba(26,188,156,0.15)', border: '#1abc9c', point: '#1abc9c' },
+  quant:   { bg: 'rgba(149,165,166,0.15)',border: '#95a5a6', point: '#95a5a6' },
+};
+
+state.selectedPersonas = new Set(['buffett', 'wood', 'dalio']);
+
 personaSelector.querySelectorAll('.persona-pill').forEach(pill => {
+  // Pre-select defaults
+  if (state.selectedPersonas.has(pill.dataset.persona)) pill.classList.add('selected');
+
   pill.addEventListener('click', () => {
-    personaSelector.querySelectorAll('.persona-pill').forEach(p => p.classList.remove('selected'));
-    pill.classList.add('selected');
-    state.analysisPersona = pill.dataset.persona;
+    const p = pill.dataset.persona;
+    if (state.selectedPersonas.has(p)) {
+      if (state.selectedPersonas.size > 1) { // keep at least 1
+        state.selectedPersonas.delete(p);
+        pill.classList.remove('selected');
+      }
+    } else {
+      if (state.selectedPersonas.size >= 4) return; // max 4
+      state.selectedPersonas.add(p);
+      pill.classList.add('selected');
+    }
   });
 });
 
@@ -1024,76 +1050,92 @@ async function runAnalysis() {
   const ticker = analysisInput.value.trim().toUpperCase();
   if (!ticker) return;
 
-  const persona = state.analysisPersona;
-  analysisResults.innerHTML = renderLoading(`Analyzing ${ticker} as ${PERSONA_LABELS[persona]}...`);
+  const personas = [...state.selectedPersonas];
+  const personaNames = personas.map(p => PERSONA_LABELS[p]).join(' vs ');
+  analysisResults.innerHTML = renderLoading(`Analyzing ${ticker}\n${personaNames}...`);
 
   try {
-    const raw = await apiFetch(`/api/analyze?ticker=${encodeURIComponent(ticker)}&persona=${persona}`);
-    const data = raw.analysis || raw; // unwrap {analysis: {...}} envelope
+    const raw = await apiFetch(`/api/analyze-multi?ticker=${encodeURIComponent(ticker)}&personas=${personas.join(',')}`);
+    const results = raw.results || [];
 
-    const actionRaw = (data.action || 'HOLD').toUpperCase();
-    const actionClass = actionRaw.includes('BUY') || actionRaw.includes('SCALE') ? 'buy'
-      : actionRaw.includes('AVOID') || actionRaw.includes('SELL') ? 'avoid' : 'hold';
-    const confidence = typeof data.confidence === 'number'
-      ? (data.confidence <= 1 ? Math.round(data.confidence * 100) : data.confidence)
-      : 0;
+    if (results.length === 0) {
+      analysisResults.innerHTML = renderError('No analysis results', runAnalysis);
+      return;
+    }
 
-    // Radar dimensions — normalize to 0-100 scale
-    const dims = data.dimensions || {};
-    const radarLabels = ['Value', 'Growth', 'Momentum', 'Risk', 'Quality'];
     const norm = v => typeof v === 'number' ? (v <= 10 ? v * 10 : v) : 50;
-    const radarData = [
-      norm(dims.value), norm(dims.growth), norm(dims.momentum),
-      norm(dims.risk), norm(dims.quality)
-    ];
+    const radarLabels = ['Value', 'Growth', 'Momentum', 'Risk', 'Quality'];
+
+    // Build action badges + summaries
+    const cards = results.map(r => {
+      const d = r.analysis || {};
+      const action = (d.action || 'HOLD').toUpperCase();
+      const cls = action.includes('BUY') || action.includes('SCALE') ? 'buy'
+        : action.includes('AVOID') || action.includes('SELL') ? 'avoid' : 'hold';
+      const conf = typeof d.confidence === 'number'
+        ? (d.confidence <= 1 ? Math.round(d.confidence * 100) : d.confidence) : 0;
+      const color = PERSONA_COLORS[r.persona]?.border || '#888';
+      return `
+        <div style="border-left:3px solid ${color};padding:8px 12px;margin-bottom:10px;background:rgba(255,255,255,0.03);border-radius:0 8px 8px 0">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+            <span style="font-weight:600;color:${color}">${PERSONA_LABELS[r.persona]}</span>
+            <span class="action-badge ${cls}" style="font-size:11px;padding:2px 8px">${action}</span>
+          </div>
+          <div style="font-size:12px;line-height:1.5;color:var(--muted)">${d.summary || ''}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">Confidence: ${conf}%</div>
+        </div>`;
+    }).join('');
 
     analysisResults.innerHTML = `
       <div class="analysis-card">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-          <div>
-            <span style="font-size:20px;font-weight:700">${ticker}</span>
-            <span style="font-size:13px;color:var(--muted);margin-left:8px">${PERSONA_LABELS[persona]} view</span>
-          </div>
-          <span class="action-badge ${actionClass}">${actionRaw}</span>
+        <div style="margin-bottom:12px">
+          <span style="font-size:20px;font-weight:700">${ticker}</span>
+          <span style="font-size:13px;color:var(--muted);margin-left:8px">${results.length} perspectives</span>
         </div>
-        <div class="radar-container"><canvas id="radarChart"></canvas></div>
-        <div style="font-size:13px;line-height:1.6;margin-bottom:12px">${data.summary || 'No summary available.'}</div>
-        <div class="confidence-label">Confidence: ${confidence}%</div>
-        <div class="confidence-bar"><div class="fill" style="width:${confidence}%"></div></div>
-      </div>
-    `;
+        <div class="radar-container" style="height:260px"><canvas id="radarChart"></canvas></div>
+        <div style="margin-top:12px">${cards}</div>
+      </div>`;
 
-    // Build radar chart
+    // Build overlay radar chart
+    const datasets = results.map(r => {
+      const d = r.analysis?.dimensions || {};
+      const c = PERSONA_COLORS[r.persona] || PERSONA_COLORS.quant;
+      return {
+        label: PERSONA_LABELS[r.persona],
+        data: [norm(d.value), norm(d.growth), norm(d.momentum), norm(d.risk), norm(d.quality)],
+        backgroundColor: c.bg,
+        borderColor: c.border,
+        pointBackgroundColor: c.point,
+        pointBorderColor: '#fff',
+        pointRadius: 3,
+        borderWidth: 2,
+      };
+    });
+
     destroyChart('radar');
     state.chartInstances.radar = new Chart(document.getElementById('radarChart'), {
       type: 'radar',
-      data: {
-        labels: radarLabels,
-        datasets: [{
-          data: radarData,
-          backgroundColor: 'rgba(233,69,96,0.15)',
-          borderColor: 'rgba(233,69,96,0.8)',
-          pointBackgroundColor: '#e94560',
-          pointBorderColor: '#fff',
-          pointRadius: 4,
-          borderWidth: 2,
-        }]
-      },
+      data: { labels: radarLabels, datasets },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { color: '#eaeaea', font: { size: 11 }, boxWidth: 12, padding: 8 },
+          },
+        },
         scales: {
           r: {
             beginAtZero: true,
             max: 100,
-            ticks: { stepSize: 25, color: '#8892b0', backdropColor: 'transparent', font: { size: 10 } },
+            ticks: { stepSize: 25, color: '#8892b0', backdropColor: 'transparent', font: { size: 9 } },
             grid: { color: 'rgba(255,255,255,0.08)' },
             angleLines: { color: 'rgba(255,255,255,0.08)' },
-            pointLabels: { color: '#eaeaea', font: { size: 12, weight: '600' } }
-          }
-        }
-      }
+            pointLabels: { color: '#eaeaea', font: { size: 11, weight: '600' } },
+          },
+        },
+      },
     });
   } catch (err) {
     analysisResults.innerHTML = renderError(`Analysis failed for ${ticker}`, runAnalysis);
